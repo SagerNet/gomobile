@@ -1,9 +1,9 @@
 module github.com/sagernet/gomobile
 
-go 1.18
+go 1.21
 
 require (
-	golang.org/x/mod v0.14.0
-	golang.org/x/sync v0.5.0
-	golang.org/x/tools v0.16.0
+	golang.org/x/mod v0.25.0
+	golang.org/x/sync v0.15.0
+	golang.org/x/tools v0.34.0
 )
