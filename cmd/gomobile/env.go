@@ -81,10 +81,14 @@ func platformTags(platform string) []string {
 	switch platform {
 	case "android":
 		return []string{"android"}
-	case "ios", "iossimulator":
+	case "ios":
 		return []string{"ios"}
-	case "tvos", "tvossimulator":
+	case "iossimulator":
+		return []string{"ios", "iossimulator"}
+	case "tvos":
 		return []string{"ios", "tvos"}
+	case "tvossimulator":
+		return []string{"ios", "tvos", "tvossimulator"}
 	case "macos":
 		return []string{"macos"}
 	case "maccatalyst":
