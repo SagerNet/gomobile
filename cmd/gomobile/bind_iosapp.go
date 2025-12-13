@@ -5,6 +5,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -122,6 +124,32 @@ func goAppleBind(gobind string, pkgs []*packages.Package, targets []targetInfo) 
 
 			if err := goAppleBindArchive(appleArchiveFilepath(name, t), env, outSrcDir); err != nil {
 				return fmt.Errorf("%s/%s: %v", t.platform, t.arch, err)
+			}
+
+			// Extract and merge external static libraries from CGO LDFLAGS
+			pkgPaths := make([]string, len(pkgs))
+			for i, p := range pkgs {
+				pkgPaths[i] = p.PkgPath
+			}
+			tags := append(buildTags[:], platformTags(t.platform)...)
+			if t.platform == "macos" {
+				tags = append(tags, buildTagsMacOS...)
+			} else {
+				tags = append(tags, buildTagsNotMacos...)
+			}
+			externalLibraries, err := extractExternalStaticLibraries(env, outSrcDir, pkgPaths, tags)
+			if err != nil {
+				return fmt.Errorf("failed to extract external libraries for %s/%s: %v", t.platform, t.arch, err)
+			}
+			if len(externalLibraries) > 0 {
+				archivePath := appleArchiveFilepath(name, t)
+				mergedPath := archivePath + ".merged"
+				if err := mergeStaticLibraries(archivePath, externalLibraries, mergedPath); err != nil {
+					return fmt.Errorf("failed to merge static libraries for %s/%s: %v", t.platform, t.arch, err)
+				}
+				if err := os.Rename(mergedPath, archivePath); err != nil {
+					return fmt.Errorf("failed to rename merged library: %v", err)
+				}
 			}
 
 			return nil
@@ -302,6 +330,58 @@ func appleArchiveFilepath(name string, t targetInfo) string {
 
 func goAppleBindArchive(out string, env []string, gosrc string) error {
 	return goBuildAt(gosrc, ".", env, "-buildmode=c-archive", "-o", out)
+}
+
+// extractExternalStaticLibraries extracts static library paths from CGO LDFLAGS
+// of all dependencies. This is needed because go build -buildmode=c-archive
+// does not include external static libraries specified in CGO LDFLAGS.
+func extractExternalStaticLibraries(env []string, gosrc string, pkgPaths []string, tags []string) ([]string, error) {
+	cmd := exec.Command("go", "list", "-json", "-deps")
+	if len(tags) > 0 {
+		cmd.Args = append(cmd.Args, "-tags="+strings.Join(tags, ","))
+	}
+	cmd.Args = append(cmd.Args, pkgPaths...)
+	cmd.Env = append(os.Environ(), env...)
+	cmd.Dir = gosrc
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("go list failed: %w", err)
+	}
+
+	type Package struct {
+		CgoLDFLAGS []string `json:"CgoLDFLAGS"`
+	}
+
+	seen := make(map[string]bool)
+	var libraries []string
+
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	for decoder.More() {
+		var pkg Package
+		if err := decoder.Decode(&pkg); err != nil {
+			return nil, fmt.Errorf("failed to decode package info: %w", err)
+		}
+
+		for _, flag := range pkg.CgoLDFLAGS {
+			// Only include .a files (static libraries)
+			if strings.HasSuffix(flag, ".a") && !seen[flag] {
+				seen[flag] = true
+				libraries = append(libraries, flag)
+			}
+		}
+	}
+
+	return libraries, nil
+}
+
+// mergeStaticLibraries merges the Go archive with external static libraries
+// using libtool. This creates a single archive containing all symbols.
+func mergeStaticLibraries(goArchive string, externalLibraries []string, output string) error {
+	args := []string{"libtool", "-static", "-o", output, goArchive}
+	args = append(args, externalLibraries...)
+	cmd := exec.Command("xcrun", args...)
+	return runCmd(cmd)
 }
 
 var appleBindHeaderTmpl = template.Must(template.New("apple.h").Parse(`
