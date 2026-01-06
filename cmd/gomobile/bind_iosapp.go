@@ -5,8 +5,7 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -122,7 +121,15 @@ func goAppleBind(gobind string, pkgs []*packages.Package, targets []targetInfo) 
 			gopath := fmt.Sprintf("GOPATH=%s%c%s", outDir, filepath.ListSeparator, goEnv("GOPATH"))
 			env = append(env, gopath)
 
-			if err := goAppleBindArchive(appleArchiveFilepath(name, t), env, outSrcDir); err != nil {
+			// Build platform-specific tags
+			tags := append(buildTags[:], platformTags(t.platform)...)
+			if t.platform == "macos" {
+				tags = append(tags, buildTagsMacOS...)
+			} else {
+				tags = append(tags, buildTagsNotMacos...)
+			}
+
+			if err := goAppleBindArchive(appleArchiveFilepath(name, t), env, outSrcDir, tags); err != nil {
 				return fmt.Errorf("%s/%s: %v", t.platform, t.arch, err)
 			}
 
@@ -130,12 +137,6 @@ func goAppleBind(gobind string, pkgs []*packages.Package, targets []targetInfo) 
 			pkgPaths := make([]string, len(pkgs))
 			for i, p := range pkgs {
 				pkgPaths[i] = p.PkgPath
-			}
-			tags := append(buildTags[:], platformTags(t.platform)...)
-			if t.platform == "macos" {
-				tags = append(tags, buildTagsMacOS...)
-			} else {
-				tags = append(tags, buildTagsNotMacos...)
 			}
 			externalLibraries, err := extractExternalStaticLibraries(env, outSrcDir, pkgPaths, tags)
 			if err != nil {
@@ -328,15 +329,43 @@ func appleArchiveFilepath(name string, t targetInfo) string {
 	return filepath.Join(tmpdir, name+"-"+t.platform+"-"+t.arch+".a")
 }
 
-func goAppleBindArchive(out string, env []string, gosrc string) error {
-	return goBuildAt(gosrc, ".", env, "-buildmode=c-archive", "-o", out)
+func goAppleBindArchive(out string, env []string, gosrc string, tags []string) error {
+	cmd := exec.Command("go", "build", "-buildmode=c-archive", "-o", out)
+	if len(tags) > 0 {
+		cmd.Args = append(cmd.Args, "-tags="+strings.Join(tags, ","))
+	}
+	if buildV {
+		cmd.Args = append(cmd.Args, "-v")
+	}
+	if buildX {
+		cmd.Args = append(cmd.Args, "-x")
+	}
+	if buildGcflags != "" {
+		cmd.Args = append(cmd.Args, "-gcflags", buildGcflags)
+	}
+	if buildLdflags != "" {
+		cmd.Args = append(cmd.Args, "-ldflags", buildLdflags)
+	}
+	if buildTrimpath {
+		cmd.Args = append(cmd.Args, "-trimpath")
+	}
+	if buildWork {
+		cmd.Args = append(cmd.Args, "-work")
+	}
+	if !buildVCS {
+		cmd.Args = append(cmd.Args, "-buildvcs=false")
+	}
+	cmd.Args = append(cmd.Args, ".")
+	cmd.Dir = gosrc
+	cmd.Env = append(os.Environ(), env...)
+	return runCmd(cmd)
 }
 
 // extractExternalStaticLibraries extracts static library paths from CGO LDFLAGS
 // of all dependencies. This is needed because go build -buildmode=c-archive
 // does not include external static libraries specified in CGO LDFLAGS.
 func extractExternalStaticLibraries(env []string, gosrc string, pkgPaths []string, tags []string) ([]string, error) {
-	cmd := exec.Command("go", "list", "-json", "-deps")
+	cmd := exec.Command("go", "list", "-deps", "-f", "{{range .CgoLDFLAGS}}{{println .}}{{end}}")
 	if len(tags) > 0 {
 		cmd.Args = append(cmd.Args, "-tags="+strings.Join(tags, ","))
 	}
@@ -344,32 +373,39 @@ func extractExternalStaticLibraries(env []string, gosrc string, pkgPaths []strin
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Dir = gosrc
 
-	output, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("go list failed: %w", err)
+		return nil, fmt.Errorf("go list stdout: %w", err)
 	}
-
-	type Package struct {
-		CgoLDFLAGS []string `json:"CgoLDFLAGS"`
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("go list start failed: %w", err)
 	}
 
 	seen := make(map[string]bool)
 	var libraries []string
-
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	for decoder.More() {
-		var pkg Package
-		if err := decoder.Decode(&pkg); err != nil {
-			return nil, fmt.Errorf("failed to decode package info: %w", err)
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		flag := strings.TrimSpace(scanner.Text())
+		if flag == "" {
+			continue
 		}
-
-		for _, flag := range pkg.CgoLDFLAGS {
-			// Only include .a files (static libraries)
-			if strings.HasSuffix(flag, ".a") && !seen[flag] {
-				seen[flag] = true
-				libraries = append(libraries, flag)
-			}
+		// Only include .a files (static libraries)
+		if strings.HasSuffix(flag, ".a") && !seen[flag] {
+			seen[flag] = true
+			libraries = append(libraries, flag)
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("failed to parse go list output: %w", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		if errMsg := strings.TrimSpace(stderr.String()); errMsg != "" {
+			return nil, fmt.Errorf("go list failed: %w: %s", err, errMsg)
+		}
+		return nil, fmt.Errorf("go list failed: %w", err)
 	}
 
 	return libraries, nil
