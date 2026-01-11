@@ -24,17 +24,20 @@ import (
 )
 
 var (
-	lang          = flag.String("lang", "", "target languages for bindings, either java, go, or objc. If empty, all languages are generated.")
-	outdir        = flag.String("outdir", "", "result will be written to the directory instead of stdout.")
-	javaPkg       = flag.String("javapkg", "", "custom Java package path prefix. Valid only with -lang=java.")
-	libname       = flag.String("libname", "gojni", "custom library name. Valid only with -lang=java.")
-	prefix        = flag.String("prefix", "", "custom Objective-C name prefix. Valid only with -lang=objc.")
-	bootclasspath = flag.String("bootclasspath", "", "Java bootstrap classpath.")
-	classpath     = flag.String("classpath", "", "Java classpath.")
-	tags          = flag.String("tags", "", "build tags.")
+	lang                  = flag.String("lang", "", "target languages for bindings, either java, go, objc, or csharp. If empty, all languages are generated.")
+	outdir                = flag.String("outdir", "", "result will be written to the directory instead of stdout.")
+	javaPkg               = flag.String("javapkg", "", "custom Java package path prefix. Valid only with -lang=java.")
+	csharpPkg             = flag.String("cspkg", "", "custom C# namespace prefix. Valid only with -lang=csharp.")
+	csharpNamespaceFlag   = flag.String("csnamespace", "", "custom C# namespace. Overrides -cspkg. Valid only with -lang=csharp.")
+	csharpPackageNameFlag = flag.String("cspkgname", "", "custom C# package class name. Valid only with -lang=csharp.")
+	libname               = flag.String("libname", "gojni", "custom library name. Valid only with -lang=java or -lang=csharp.")
+	prefix                = flag.String("prefix", "", "custom Objective-C name prefix. Valid only with -lang=objc.")
+	bootclasspath         = flag.String("bootclasspath", "", "Java bootstrap classpath.")
+	classpath             = flag.String("classpath", "", "Java classpath.")
+	tags                  = flag.String("tags", "", "build tags.")
 )
 
-var usage = `The Gobind tool generates Java language bindings for Go.
+var usage = `The Gobind tool generates Java, Objective-C, and C# language bindings for Go.
 
 For usage details, see doc.go.`
 
@@ -50,7 +53,10 @@ func run() {
 	if *lang != "" {
 		langs = strings.Split(*lang, ",")
 	} else {
-		langs = []string{"go", "java", "objc"}
+		langs = []string{"go", "java", "objc", "csharp"}
+	}
+	if *csharpNamespaceFlag != "" && *csharpPkg != "" {
+		log.Fatal("-cspkg and -csnamespace cannot be used together")
 	}
 
 	// We need to give appropriate environment variables like CC or CXX so that the returned packages no longer have errors.

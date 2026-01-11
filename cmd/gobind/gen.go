@@ -166,6 +166,46 @@ func genPkg(lang string, p *types.Package, astFiles []*ast.File, allPkg []*types
 			copyFile(filepath.Join("src", "gobind", "ref.h"), filepath.Join(dir, "ref.h"))
 			copyFile(filepath.Join("src", "gobind", "seq_darwin.h"), filepath.Join(dir, "seq_darwin.h"))
 		}
+	case "csharp":
+		g := &bind.CSharpGen{
+			CSharpPkg:         *csharpPkg,
+			CSharpNamespace:   *csharpNamespaceFlag,
+			CSharpPackageName: *csharpPackageNameFlag,
+			LibraryName:       libName,
+			Generator:         generator,
+		}
+		g.Init()
+
+		namespace := csharpNamespace(*csharpPkg, *csharpNamespaceFlag, p)
+		namespaceDir := strings.ReplaceAll(namespace, ".", "/")
+		buf.Reset()
+		w, closer := writer(filepath.Join("csharp", namespaceDir, fname))
+		processErr(g.GenCSharp())
+		io.Copy(w, &buf)
+		closer()
+
+		buf.Reset()
+		w, closer = writer(filepath.Join("src", "gobind", pname+"_windows.c"))
+		processErr(g.GenC())
+		io.Copy(w, &buf)
+		closer()
+
+		buf.Reset()
+		w, closer = writer(filepath.Join("src", "gobind", pname+"_windows.h"))
+		processErr(g.GenH())
+		io.Copy(w, &buf)
+		closer()
+
+		if p == nil {
+			dir, err := packageDir("github.com/sagernet/gomobile/bind/csharp")
+			if err != nil {
+				errorf("unable to import bind/csharp: %v", err)
+				return
+			}
+			copyFile(filepath.Join("src", "gobind", "seq_windows.c"), filepath.Join(dir, "seq_windows.c.support"))
+			copyFile(filepath.Join("src", "gobind", "seq_windows.h"), filepath.Join(dir, "seq_windows.h"))
+			copyFile(filepath.Join("src", "gobind", "seq_windows.go"), filepath.Join(dir, "seq_windows.go.support"))
+		}
 	default:
 		errorf("unknown target language: %q", lang)
 	}
@@ -179,6 +219,9 @@ func genPkgH(w io.Writer, pname string) {
 #endif
 #ifdef __GOBIND_DARWIN__
 #include "%[1]s_darwin.h"
+#endif
+#ifdef __GOBIND_WINDOWS__
+#include "%[1]s_windows.h"
 #endif`, pname)
 }
 
@@ -369,10 +412,42 @@ func defaultFileName(lang string, pkg *types.Package) string {
 		firstRune, size := utf8.DecodeRuneInString(pkg.Name())
 		className := string(unicode.ToUpper(firstRune)) + pkg.Name()[size:]
 		return *prefix + className + ".m"
+	case "csharp":
+		if pkg == nil {
+			return "Universe.cs"
+		}
+		className := csharpPackageClassName(pkg)
+		return className + ".cs"
 	}
 	errorf("unknown target language: %q", lang)
 	os.Exit(exitStatus)
 	return ""
+}
+
+func csharpNamespace(prefix string, namespaceOverride string, pkg *types.Package) string {
+	if namespaceOverride != "" {
+		return namespaceOverride
+	}
+	if prefix == "" {
+		prefix = "Go"
+	}
+	if pkg == nil {
+		return prefix
+	}
+	firstRune, size := utf8.DecodeRuneInString(pkg.Name())
+	className := string(unicode.ToUpper(firstRune)) + pkg.Name()[size:]
+	return prefix + "." + className
+}
+
+func csharpPackageClassName(pkg *types.Package) string {
+	if pkg == nil {
+		return "Universe"
+	}
+	if *csharpPackageNameFlag != "" {
+		return *csharpPackageNameFlag
+	}
+	firstRune, size := utf8.DecodeRuneInString(pkg.Name())
+	return string(unicode.ToUpper(firstRune)) + pkg.Name()[size:]
 }
 
 func packageDir(path string) (string, error) {
