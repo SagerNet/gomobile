@@ -25,13 +25,13 @@ import (
 var cmdBind = &command{
 	run:   runBind,
 	Name:  "bind",
-	Usage: "[-target android|" + strings.Join(applePlatforms, "|") + "] [-bootclasspath <path>] [-classpath <path>] [-o output] [build flags] [package]",
+	Usage: "[-target android|" + strings.Join(applePlatforms, "|") + "|windows] [-bootclasspath <path>] [-classpath <path>] [-o output] [build flags] [package]",
 	Short: "build a library for Android and iOS",
 	Long: `
 Bind generates language bindings for the package named by the import
 path, and compiles a library for the named target system.
 
-The -target flag takes either android (the default), or one or more
+The -target flag takes either android (the default), windows, or one or more
 comma-delimited Apple platforms (` + strings.Join(applePlatforms, ", ") + `).
 
 For -target android, the bind command produces an AAR (Android ARchive)
@@ -58,6 +58,11 @@ can be selected by specifying target type with the architecture name. E.g.,
 For Apple -target platforms, gomobile must be run on an OS X machine with
 Xcode installed. The generated Objective-C types can be prefixed with the
 -prefix flag.
+
+For -target windows, the bind command produces a .dll and C# bindings.
+The -cspkg flag specifies a C# namespace prefix for generated bindings.
+The -csnamespace flag specifies a full C# namespace. The -cspkgname flag
+specifies the C# package class name.
 
 For -target android, the -bootclasspath and -classpath flags are used to
 control the bootstrap classpath and the classpath for Go wrappers to Java
@@ -94,6 +99,12 @@ func runBind(cmd *command) error {
 	} else {
 		if bindJavaPkg != "" {
 			return fmt.Errorf("-javapkg is supported only for android target")
+		}
+		if bindCSharpPkg != "" && bindCSharpNamespace != "" {
+			return fmt.Errorf("-cspkg and -csnamespace cannot be used together")
+		}
+		if (bindCSharpPkg != "" || bindCSharpNamespace != "" || bindCSharpPackageName != "") && !isWindowsPlatform(targets[0].platform) {
+			return fmt.Errorf("-cspkg, -csnamespace, and -cspkgname are supported only for windows target")
 		}
 	}
 
@@ -133,23 +144,34 @@ func runBind(cmd *command) error {
 			return fmt.Errorf("-target=%q requires Xcode", buildTarget)
 		}
 		return goAppleBind(gobind, pkgs, targets)
+	case isWindowsPlatform(targets[0].platform):
+		return goWindowsBind(bindLibName, gobind, pkgs, targets)
 	default:
 		return fmt.Errorf(`invalid -target=%q`, buildTarget)
 	}
 }
 
 var (
-	bindPrefix        string // -prefix
-	bindJavaPkg       string // -javapkg
-	bindClasspath     string // -classpath
-	bindBootClasspath string // -bootclasspath
-	bindLibName       string // -libname
+	bindPrefix            string // -prefix
+	bindJavaPkg           string // -javapkg
+	bindCSharpPkg         string // -cspkg
+	bindCSharpNamespace   string // -csnamespace
+	bindCSharpPackageName string // -cspkgname
+	bindClasspath         string // -classpath
+	bindBootClasspath     string // -bootclasspath
+	bindLibName           string // -libname
 )
 
 func init() {
 	// bind command specific commands.
 	cmdBind.flag.StringVar(&bindJavaPkg, "javapkg", "",
 		"specifies custom Java package path prefix. Valid only with -target=android.")
+	cmdBind.flag.StringVar(&bindCSharpPkg, "cspkg", "",
+		"specifies custom C# namespace prefix. Valid only with -target=windows.")
+	cmdBind.flag.StringVar(&bindCSharpNamespace, "csnamespace", "",
+		"specifies custom C# namespace. Overrides -cspkg. Valid only with -target=windows.")
+	cmdBind.flag.StringVar(&bindCSharpPackageName, "cspkgname", "",
+		"specifies custom C# package class name. Valid only with -target=windows.")
 	cmdBind.flag.StringVar(&bindPrefix, "prefix", "",
 		"custom Objective-C name prefix. Valid only with -target=ios.")
 	cmdBind.flag.StringVar(&bindClasspath, "classpath", "", "The classpath for imported Java classes. Valid only with -target=android.")

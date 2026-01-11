@@ -1,0 +1,134 @@
+//go:build windows
+// +build windows
+
+// Copyright 2026 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+package main
+
+// Go support functions for C# bindings.
+// This file is copied into the generated main package and compiled along
+// with the generated binding files.
+
+// #cgo windows CFLAGS: -D__GOBIND_WINDOWS__
+// #include <stdlib.h>
+// #include "seq.h"
+import "C"
+
+import (
+	"unsafe"
+
+	_seq "github.com/sagernet/gomobile/bind/seq"
+)
+
+func init() {
+	_seq.FinalizeRef = func(ref *_seq.Ref) {
+		refnum := ref.Bind_Num
+		if refnum < 0 {
+			panic("not a foreign ref")
+		}
+		C.go_seq_dec_ref(C.int32_t(refnum))
+	}
+	_seq.IncForeignRef = func(refnum int32) {
+		if refnum < 0 {
+			panic("not a foreign ref")
+		}
+		C.go_seq_inc_ref(C.int32_t(refnum))
+	}
+}
+
+// IncGoRef is called by foreign code to pin a Go object while its refnum is crossing
+// the language barrier.
+//
+//export IncGoRef
+func IncGoRef(refnum C.int32_t) {
+	_seq.Inc(int32(refnum))
+}
+
+// DestroyRef is called by foreign code to inform Go it is done with a reference.
+//
+//export DestroyRef
+func DestroyRef(refnum C.int32_t) {
+	_seq.Delete(int32(refnum))
+}
+
+// GoSeqAlloc allocates memory using the C allocator for passing data to Go.
+//
+//export GoSeqAlloc
+func GoSeqAlloc(size C.int32_t) unsafe.Pointer {
+	if size <= 0 {
+		return nil
+	}
+	return C.malloc(C.size_t(size))
+}
+
+// GoSeqFree frees memory allocated by GoSeqAlloc.
+//
+//export GoSeqFree
+func GoSeqFree(ptr unsafe.Pointer) {
+	if ptr == nil {
+		return
+	}
+	C.free(ptr)
+}
+
+// encodeString copies a Go string and returns it as a nstring.
+func encodeString(s string) C.nstring {
+	n := C.int(len(s))
+	if n == 0 {
+		return C.nstring{}
+	}
+	ptr := C.malloc(C.size_t(n))
+	if ptr == nil {
+		panic("encodeString: malloc failed")
+	}
+	copy((*[1<<31 - 1]byte)(ptr)[:n], s)
+	return C.nstring{ptr: ptr, len: n}
+}
+
+// decodeString converts a nstring to a Go string. The data in str is freed after use.
+func decodeString(str C.nstring) string {
+	if str.ptr == nil {
+		return ""
+	}
+	s := C.GoStringN((*C.char)(str.ptr), str.len)
+	C.free(str.ptr)
+	return s
+}
+
+// fromSlice converts a slice to a nbyteslice.
+// If cpy is set, a malloc'ed copy of the data is returned.
+func fromSlice(s []byte, cpy bool) C.nbyteslice {
+	if s == nil || len(s) == 0 {
+		return C.nbyteslice{}
+	}
+	ptr, n := unsafe.Pointer(&s[0]), C.int(len(s))
+	if cpy {
+		nptr := C.malloc(C.size_t(n))
+		if nptr == nil {
+			panic("fromSlice: malloc failed")
+		}
+		copy((*[1<<31 - 1]byte)(nptr)[:n], (*[1<<31 - 1]byte)(ptr)[:n])
+		ptr = nptr
+	}
+	return C.nbyteslice{ptr: ptr, len: n}
+}
+
+// toSlice takes a nbyteslice and returns a byte slice with the data. If cpy is
+// set, the slice contains a copy of the data.
+func toSlice(s C.nbyteslice, cpy bool) []byte {
+	if s.ptr == nil || s.len == 0 {
+		return nil
+	}
+	var b []byte
+	if cpy {
+		b = C.GoBytes(s.ptr, C.int(s.len))
+		C.free(s.ptr)
+	} else {
+		b = (*[1<<31 - 1]byte)(unsafe.Pointer(s.ptr))[:s.len:s.len]
+	}
+	return b
+}
+
+func main() {}

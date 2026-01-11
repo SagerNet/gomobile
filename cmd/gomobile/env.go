@@ -32,6 +32,10 @@ func isApplePlatform(platform string) bool {
 	return contains(applePlatforms, platform)
 }
 
+func isWindowsPlatform(platform string) bool {
+	return platform == "windows"
+}
+
 var applePlatforms = []string{"ios", "iossimulator", "macos", "maccatalyst", "tvos", "tvossimulator"}
 
 func platformArchs(platform string) []string {
@@ -48,6 +52,8 @@ func platformArchs(platform string) []string {
 		return []string{"arm64", "amd64"}
 	case "android":
 		return []string{"arm", "arm64", "386", "amd64"}
+	case "windows":
+		return []string{"386", "amd64", "arm64"}
 	default:
 		panic(fmt.Sprintf("unexpected platform: %s", platform))
 	}
@@ -72,6 +78,8 @@ func platformOS(platform string) string {
 		return "darwin"
 	case "tvos", "tvossimulator":
 		return "darwin"
+	case "windows":
+		return "windows"
 	default:
 		panic(fmt.Sprintf("unexpected platform: %s", platform))
 	}
@@ -105,6 +113,8 @@ func platformTags(platform string) []string {
 		// TODO(ydnar): remove tag "ios" when cgo supports Catalyst
 		// See golang.org/issues/47228
 		return []string{"ios", "macos", "maccatalyst"}
+	case "windows":
+		return []string{"windows"}
 	default:
 		panic(fmt.Sprintf("unexpected platform: %s", platform))
 	}

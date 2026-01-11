@@ -57,6 +57,7 @@ func runVersion(cmd *command) (err error) {
 	if xcodeAvailable() {
 		platforms += "," + strings.Join(applePlatforms, ",")
 	}
+	platforms += ",windows"
 
 	androidapi, _ := sdkpath.AndroidAPIPath(buildAndroidAPI)
 

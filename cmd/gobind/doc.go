@@ -4,7 +4,7 @@
 
 /*
 Gobind generates language bindings that make it possible to call Go
-functions from Java and Objective-C.
+functions from Java, Objective-C, and C#.
 
 Typically gobind is not used directly. Instead, a binding is
 generated and automatically packaged for Android or iOS by
@@ -13,16 +13,19 @@ tool, see https://github.com/sagernet/gomobile/cmd/gomobile.
 
 # Binding Go
 
-Gobind generates target language (Java or Objective-C) bindings for
+Gobind generates target language (Java, Objective-C, or C#) bindings for
 each exported symbol in a Go package. The Go package you choose to
 bind defines a cross-language interface.
 
 Bindings require additional Go code be generated, so using gobind
 manually requires calling it twice, first with -lang=<target>, where
-target is either java or objc, and again with -lang=go. The generated
+target is either java, objc, or csharp, and again with -lang=go. The generated
 package can then be _ imported into a Go program, typically built
 with -buildmode=c-archive for iOS or -buildmode=c-shared for Android.
 These details are handled by the `gomobile bind` command.
+
+For C# bindings, use -cspkg to set the namespace prefix, -csnamespace
+to set the full namespace, and -cspkgname to set the package class name.
 
 # Passing Go objects to target languages
 
