@@ -3,30 +3,39 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 
 #include "seq.h"
 
-static go_seq_ref_fn go_seq_inc_ref_callback = NULL;
-static go_seq_ref_fn go_seq_dec_ref_callback = NULL;
+static _Atomic(int) go_seq_initialized = 0;
+static _Atomic(go_seq_ref_fn) go_seq_inc_ref_callback = NULL;
+static _Atomic(go_seq_ref_fn) go_seq_dec_ref_callback = NULL;
+
+SEQ_EXPORT void go_seq_init(void) {
+	int expected = 0;
+	atomic_compare_exchange_strong(&go_seq_initialized, &expected, 1);
+}
 
 SEQ_EXPORT void go_seq_set_inc_ref(go_seq_ref_fn fn) {
-	go_seq_inc_ref_callback = fn;
+	atomic_store(&go_seq_inc_ref_callback, fn);
 }
 
 SEQ_EXPORT void go_seq_set_dec_ref(go_seq_ref_fn fn) {
-	go_seq_dec_ref_callback = fn;
+	atomic_store(&go_seq_dec_ref_callback, fn);
 }
 
 void go_seq_inc_ref(int32_t refnum) {
-	if (go_seq_inc_ref_callback == NULL) {
+	go_seq_ref_fn fn = atomic_load(&go_seq_inc_ref_callback);
+	if (fn == NULL) {
 		return;
 	}
-	go_seq_inc_ref_callback(refnum);
+	fn(refnum);
 }
 
 void go_seq_dec_ref(int32_t refnum) {
-	if (go_seq_dec_ref_callback == NULL) {
+	go_seq_ref_fn fn = atomic_load(&go_seq_dec_ref_callback);
+	if (fn == NULL) {
 		return;
 	}
-	go_seq_dec_ref_callback(refnum);
+	fn(refnum);
 }

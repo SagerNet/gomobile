@@ -28,6 +28,8 @@ typedef int64_t nint;
 
 typedef void (*go_seq_ref_fn)(int32_t refnum);
 
+// Initialize the Go<=>C# binding layer. Must be called before any other go_seq_* function.
+SEQ_EXPORT void go_seq_init(void);
 SEQ_EXPORT void go_seq_inc_ref(int32_t refnum);
 SEQ_EXPORT void go_seq_dec_ref(int32_t refnum);
 SEQ_EXPORT void go_seq_set_inc_ref(go_seq_ref_fn fn);

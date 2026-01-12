@@ -282,6 +282,25 @@ func (g *CSharpGen) proxyFuncName(objName, funcName string) string {
 	return fmt.Sprintf("proxy%s_%s_%s", g.pkgPrefix, objName, funcName)
 }
 
+// isConsSigSupported reports whether the generators can handle a given
+// constructor signature. It skips constructors taking a single int32 argument
+// since they clash with the proxy constructors that take a refnum.
+func (g *CSharpGen) isConsSigSupported(t types.Type) bool {
+	if !g.isSigSupported(t) {
+		return false
+	}
+	params := t.(*types.Signature).Params()
+	if params.Len() != 1 {
+		return true
+	}
+	if basicType, ok := params.At(0).Type().(*types.Basic); ok {
+		if basicType.Kind() == types.Int32 {
+			return false
+		}
+	}
+	return true
+}
+
 func (g *CSharpGen) newFuncName(structName string) string {
 	if g.Pkg == nil {
 		return ""
@@ -382,6 +401,8 @@ func (g *CSharpGen) GenCSharp() error {
 			libName = "gojni"
 		}
 		g.Printf("internal const string LibraryName = %q;\n\n", libName)
+		g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
+		g.Printf("internal static extern void go_seq_init();\n\n")
 		g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
 		g.Printf("internal static extern void DestroyRef(int refnum);\n\n")
 		g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
@@ -818,7 +839,7 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 	hasDefaultConstructor := false
 	for _, f := range g.funcs {
 		if t := g.constructorType(f); t != nil && t == s.obj {
-			if !g.isSigSupported(f.Type()) {
+			if !g.isConsSigSupported(f.Type()) {
 				continue
 			}
 			constructors = append(constructors, f)
@@ -1008,8 +1029,13 @@ func (g *CSharpGen) genConstructorFromFunc(rootNamespace string, structName stri
 		}
 	}
 	if returnsError {
-		g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
 		g.Printf("refnum = res.r0;\n")
+		g.Printf("if (res.r1 != %s.Seq.NullRefNum) {\n", rootNamespace)
+		g.Indent()
+		g.Printf("%s.Seq.DestroyRef(refnum);\n", rootNamespace)
+		g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+		g.Outdent()
+		g.Printf("}\n")
 	} else {
 		g.Printf("refnum = res;\n")
 	}
@@ -1368,7 +1394,7 @@ func (g *CSharpGen) defaultNativeReturn(t types.Type) string {
 	case *types.Slice:
 		return "new NByteslice()"
 	case *types.Pointer, *types.Named:
-		return "0"
+		return fmt.Sprintf("%s.Seq.NullRefNum", g.rootNamespace())
 	default:
 		return "0"
 	}
@@ -1385,6 +1411,7 @@ func (g *CSharpGen) genSeqSupport() {
 
 	g.Printf("static Seq() {\n")
 	g.Indent()
+	g.Printf("Native.go_seq_init();\n")
 	g.Printf("Native.go_seq_set_inc_ref(Marshal.GetFunctionPointerForDelegate(IncRefCallback));\n")
 	g.Printf("Native.go_seq_set_dec_ref(Marshal.GetFunctionPointerForDelegate(DecRefCallback));\n")
 	g.Outdent()
@@ -1457,12 +1484,18 @@ func (g *CSharpGen) genSeqSupport() {
 	g.Outdent()
 	g.Printf("}\n\n")
 
+	g.Printf("public static Exception LastUnhandledException { get; private set; }\n")
+	g.Printf("public static string LastUnhandledExceptionMethod { get; private set; }\n")
+	g.Printf("public static bool ThrowOnUnhandledCallbackException { get; set; }\n")
 	g.Printf("public static Action<Exception, string> UnhandledCallbackException { get; set; }\n\n")
 	g.Printf("internal static void ReportUnhandledException(Exception ex, string methodName) {\n")
 	g.Indent()
+	g.Printf("LastUnhandledException = ex;\n")
+	g.Printf("LastUnhandledExceptionMethod = methodName;\n")
 	g.Printf("var handler = UnhandledCallbackException;\n")
 	g.Printf("if (handler != null) { handler(ex, methodName); }\n")
-	g.Printf("else { System.Diagnostics.Debug.WriteLine($\"Unhandled exception in Go callback {methodName}: {ex}\"); }\n")
+	g.Printf("Console.Error.WriteLine($\"[GoMobile] Unhandled exception in callback {methodName}: {ex}\");\n")
+	g.Printf("if (ThrowOnUnhandledCallbackException) { throw new InvalidOperationException($\"Unhandled exception in Go callback {methodName}\", ex); }\n")
 	g.Outdent()
 	g.Printf("}\n\n")
 
