@@ -357,6 +357,9 @@ func goAppleBindArchive(out string, env []string, gosrc string, tags []string) e
 	}
 	cmd.Args = append(cmd.Args, ".")
 	cmd.Dir = gosrc
+	if gmc, err := goModCachePath(); err == nil {
+		env = append([]string{"GOMODCACHE=" + gmc}, env...)
+	}
 	cmd.Env = append(os.Environ(), env...)
 	return runCmd(cmd)
 }
