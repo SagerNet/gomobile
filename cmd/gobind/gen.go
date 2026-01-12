@@ -91,6 +91,7 @@ func genPkg(lang string, p *types.Package, astFiles []*ast.File, allPkg []*types
 				srcContent, err := os.ReadFile(src)
 				if err != nil {
 					errorf("failed to open Java support file: %v", err)
+					return
 				}
 				srcContent = []byte(strings.ReplaceAll(string(srcContent), "gojni", libName))
 				w, closer := writer(filepath.Join("java", "go", javaFile))
@@ -99,11 +100,6 @@ func genPkg(lang string, p *types.Package, astFiles []*ast.File, allPkg []*types
 					errorf("failed to copy Java support file: %v", err)
 					return
 				}
-			}
-			// Copy support files
-			if err != nil {
-				errorf("unable to import bind/java: %v", err)
-				return
 			}
 			javaDir, err := packageDir("github.com/sagernet/gomobile/bind/java")
 			if err != nil {

@@ -348,9 +348,6 @@ func (g *CSharpGen) GenCSharp() error {
 		for _, m := range methods {
 			collectStruct(g.proxyFuncName(s.obj.Name(), m.Name()), m.Type().(*types.Signature).Results())
 		}
-		for _, f := range exportedFields(s.t) {
-			_ = f
-		}
 	}
 	for _, iface := range g.interfaces {
 		for _, m := range iface.summary.callable {
@@ -997,11 +994,7 @@ func (g *CSharpGen) genConstructorFromFunc(rootNamespace string, structName stri
 		g.emitToNativeParam(g.paramName(params, i), params.At(i).Type(), modeTransient)
 	}
 	cName := g.proxyFuncName("", f.Name())
-	if returnsError {
-		g.Printf("var res = %s.Native.%s(", rootNamespace, cName)
-	} else {
-		g.Printf("var res = %s.Native.%s(", rootNamespace, cName)
-	}
+	g.Printf("var res = %s.Native.%s(", rootNamespace, cName)
 	for i := 0; i < params.Len(); i++ {
 		if i > 0 {
 			g.Printf(", ")
@@ -1069,7 +1062,7 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 	g.Printf("internal sealed class %s : %s.Seq.IProxy, %s {\n", proxyName, rootNamespace, name)
 	g.Indent()
 	g.Printf("private readonly int refnum;\n")
-	g.Printf("private static bool registered;\n\n")
+	g.Printf("private static int registered;\n\n")
 
 	g.Printf("internal %s(int refnum) { this.refnum = refnum; }\n\n", proxyName)
 	g.Printf("~%s() { %s.Seq.DestroyRef(refnum); }\n\n", proxyName, rootNamespace)
@@ -1170,7 +1163,7 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 	// Callback registration
 	g.Printf("internal static void EnsureRegistered() {\n")
 	g.Indent()
-	g.Printf("if (registered) { return; }\n")
+	g.Printf("if (System.Threading.Interlocked.CompareExchange(ref registered, 1, 0) != 0) { return; }\n")
 	g.Printf("%s.Seq.Touch();\n", rootNamespace)
 	for _, m := range iface.summary.callable {
 		if !g.isSigSupported(m.Type()) {
@@ -1180,7 +1173,6 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 		setterName := g.cproxySetterName(g.pkgPrefix, iface.obj.Name(), m.Name())
 		g.Printf("%s.Native.%s(Marshal.GetFunctionPointerForDelegate(%s));\n", rootNamespace, setterName, cbName)
 	}
-	g.Printf("registered = true;\n")
 	g.Outdent()
 	g.Printf("}\n\n")
 
@@ -1229,8 +1221,9 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 		if res.Len() == 0 {
 			g.Printf("%s;\n", callExpr)
 			g.Outdent()
-			g.Printf("} catch (Exception) {\n")
+			g.Printf("} catch (Exception ex) {\n")
 			g.Indent()
+			g.Printf("%s.Seq.ReportUnhandledException(ex, \"%s.%s\");\n", rootNamespace, iface.obj.Name(), m.Name())
 			g.Outdent()
 			g.Printf("}\n")
 			g.Printf("return;\n")
@@ -1262,8 +1255,9 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 			g.Printf("var result = %s;\n", callExpr)
 			g.emitToNativeReturn("result", res.At(0).Type())
 			g.Outdent()
-			g.Printf("} catch (Exception) {\n")
+			g.Printf("} catch (Exception ex) {\n")
 			g.Indent()
+			g.Printf("%s.Seq.ReportUnhandledException(ex, \"%s.%s\");\n", rootNamespace, iface.obj.Name(), m.Name())
 			g.Printf("return %s;\n", g.defaultNativeReturn(res.At(0).Type()))
 			g.Outdent()
 			g.Printf("}\n")
@@ -1460,6 +1454,15 @@ func (g *CSharpGen) genSeqSupport() {
 	g.Printf("if (refnum == NullRefNum) { return; }\n")
 	g.Printf("var error = ProxyError.FromRefnum(refnum);\n")
 	g.Printf("throw new GoException(error);\n")
+	g.Outdent()
+	g.Printf("}\n\n")
+
+	g.Printf("public static Action<Exception, string> UnhandledCallbackException { get; set; }\n\n")
+	g.Printf("internal static void ReportUnhandledException(Exception ex, string methodName) {\n")
+	g.Indent()
+	g.Printf("var handler = UnhandledCallbackException;\n")
+	g.Printf("if (handler != null) { handler(ex, methodName); }\n")
+	g.Printf("else { System.Diagnostics.Debug.WriteLine($\"Unhandled exception in Go callback {methodName}: {ex}\"); }\n")
 	g.Outdent()
 	g.Printf("}\n\n")
 
