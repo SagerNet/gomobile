@@ -8,6 +8,14 @@ package seq
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifndef DBG_PRINTEXCEPTION_C
+#define DBG_PRINTEXCEPTION_C 0x40010006
+#endif
+
+#ifndef DBG_PRINTEXCEPTION_WIDE_C
+#define DBG_PRINTEXCEPTION_WIDE_C 0x4001000A
+#endif
+
 static void seq_debug_output(const char* message) {
 	OutputDebugStringA(message);
 }
@@ -26,19 +34,27 @@ static LONG WINAPI seq_crash_handler(EXCEPTION_POINTERS* exceptionInfo) {
         }
         DWORD exceptionCode = exceptionInfo->ExceptionRecord->ExceptionCode;
         void* exceptionAddress = exceptionInfo->ExceptionRecord->ExceptionAddress;
+        if (exceptionCode == DBG_PRINTEXCEPTION_C || exceptionCode == DBG_PRINTEXCEPTION_WIDE_C) {
+                return EXCEPTION_CONTINUE_SEARCH;
+        }
+        static LONG seq_in_exception_handler = 0;
+        if (InterlockedExchange(&seq_in_exception_handler, 1) != 0) {
+                return EXCEPTION_CONTINUE_SEARCH;
+        }
         char message[256];
-	int length = snprintf(
-		message,
-		sizeof(message),
-		"gomobile: unhandled exception 0x%08lX at %p\n",
-		exceptionCode,
-		exceptionAddress
-	);
+        int length = snprintf(
+                message,
+                sizeof(message),
+                "gomobile: unhandled exception 0x%08lX at %p\n",
+                exceptionCode,
+                exceptionAddress
+        );
         if (length > 0) {
                 OutputDebugStringA(message);
         } else {
                 OutputDebugStringA("gomobile: unhandled exception\n");
         }
+        InterlockedExchange(&seq_in_exception_handler, 0);
         return EXCEPTION_CONTINUE_SEARCH;
 }
 

@@ -928,14 +928,16 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 		g.Indent()
 		g.Printf("get {\n")
 		g.Indent()
-		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+                g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+                g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
 		g.Printf("var res = %s.Native.%s_Get(refnum);\n", rootNamespace, g.proxyFuncName(s.obj.Name(), f.Name()))
 		g.emitFromNativeReturn("res", f.Type(), true)
 		g.Outdent()
 		g.Printf("}\n")
 		g.Printf("set {\n")
 		g.Indent()
-		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+                g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+                g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
 		g.emitToNativeParam("value", f.Type(), modeRetained)
 		g.Printf("%s.Native.%s_Set(refnum, %s);\n", rootNamespace, g.proxyFuncName(s.obj.Name(), f.Name()), g.nativeParamName("value"))
 		g.Outdent()
@@ -987,7 +989,8 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 		}
 		g.Printf(") {\n")
 		g.Indent()
-		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+                g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+                g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
 		for i := 0; i < params.Len(); i++ {
 			g.emitToNativeParam(g.paramName(params, i), params.At(i).Type(), modeTransient)
 		}
@@ -1215,7 +1218,8 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 		}
 		g.Printf(") {\n")
 		g.Indent()
-		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+                g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+                g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
 		for i := 0; i < params.Len(); i++ {
 			g.emitToNativeParam(g.paramName(params, i), params.At(i).Type(), modeTransient)
 		}
