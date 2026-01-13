@@ -509,9 +509,43 @@ func (g *CSharpGen) emitNativeClass() {
 			}
 			g.Printf(");\n\n")
 		}
+		for _, f := range exportedFields(s.t) {
+			if !g.isSupported(f.Type()) {
+				continue
+			}
+			g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
+			g.Printf("internal static extern void %s_Set(int refnum, %s v);\n\n", g.proxyFuncName(s.obj.Name(), f.Name()), g.csNativeType(f.Type()))
+			g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
+			g.Printf("internal static extern %s %s_Get(int refnum);\n\n", g.csNativeType(f.Type()), g.proxyFuncName(s.obj.Name(), f.Name()))
+		}
+		newName := g.newFuncName(s.obj.Name())
+		if newName != "" {
+			g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
+			g.Printf("internal static extern int %s();\n\n", newName)
+		}
 	}
 
 	for _, iface := range g.interfaces {
+		for _, m := range iface.summary.callable {
+			if !g.isSigSupported(m.Type()) {
+				continue
+			}
+			sig := m.Type().(*types.Signature)
+			cName := g.proxyFuncName(iface.obj.Name(), m.Name())
+			retType := "void"
+			if sig.Results().Len() == 1 {
+				retType = g.csNativeType(sig.Results().At(0).Type())
+			} else if sig.Results().Len() == 2 {
+				retType = g.csReturnStructName(cName)
+			}
+			g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
+			g.Printf("internal static extern %s %s(int refnum", retType, cName)
+			params := sig.Params()
+			for i := 0; i < params.Len(); i++ {
+				g.Printf(", %s %s", g.csNativeType(params.At(i).Type()), g.paramName(params, i))
+			}
+			g.Printf(");\n\n")
+		}
 		for _, m := range iface.summary.callable {
 			if !g.isSigSupported(m.Type()) {
 				continue
