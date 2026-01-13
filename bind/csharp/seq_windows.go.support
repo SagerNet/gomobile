@@ -36,17 +36,13 @@ import (
 //go:linkname runtimeOverrideWrite runtime.overrideWrite
 var runtimeOverrideWrite func(fd uintptr, p unsafe.Pointer, n int32) int32
 
-// Buffer for accumulating output until newline (for proper line-based output to debugger).
-const debugOutputBufferSize = 4096
-
-var (
-	debugOutputBuffer [debugOutputBufferSize]byte
-	debugOutputPos    int
-)
-
 // debugWrite intercepts all writes to stderr and redirects them to OutputDebugString.
 // This is essential for capturing panic stack traces when the DLL is loaded by a GUI app
 // that has no console (GetStdHandle returns NULL).
+//
+// Note: This writes directly without line buffering to avoid race conditions in the
+// nosplit context. OutputDebugString will receive partial lines, but debug viewers
+// handle this correctly.
 //
 //go:nosplit
 func debugWrite(fd uintptr, p unsafe.Pointer, n int32) int32 {
@@ -54,44 +50,26 @@ func debugWrite(fd uintptr, p unsafe.Pointer, n int32) int32 {
 		return n
 	}
 
+	// Write directly in chunks to avoid large stack allocation.
+	// Stack buffer size must be conservative due to nosplit stack budget (~768 bytes).
+	const maxChunk = 256
 	b := (*[1 << 30]byte)(p)[:n]
 
 	for len(b) > 0 {
-		available := debugOutputBufferSize - 1 - debugOutputPos // -1 for null terminator
-		if available <= 0 {
-			flushDebugOutput()
-			available = debugOutputBufferSize - 1
+		chunk := len(b)
+		if chunk > maxChunk-1 { // -1 for null terminator
+			chunk = maxChunk - 1
 		}
 
-		toCopy := len(b)
-		if toCopy > available {
-			toCopy = available
-		}
+		var buf [maxChunk]byte
+		copy(buf[:], b[:chunk])
+		buf[chunk] = 0
 
-		copy(debugOutputBuffer[debugOutputPos:], b[:toCopy])
-		debugOutputPos += toCopy
-		b = b[toCopy:]
-
-		// Flush on newline for proper line-based output
-		for i := debugOutputPos - toCopy; i < debugOutputPos; i++ {
-			if debugOutputBuffer[i] == '\n' {
-				flushDebugOutput()
-				break
-			}
-		}
+		C.debugOutput((*C.char)(unsafe.Pointer(&buf[0])))
+		b = b[chunk:]
 	}
 
 	return n
-}
-
-// flushDebugOutput sends the buffered content to OutputDebugString.
-func flushDebugOutput() {
-	if debugOutputPos == 0 {
-		return
-	}
-	debugOutputBuffer[debugOutputPos] = 0 // Null-terminate for OutputDebugStringA
-	C.debugOutput((*C.char)(unsafe.Pointer(&debugOutputBuffer[0])))
-	debugOutputPos = 0
 }
 
 func init() {

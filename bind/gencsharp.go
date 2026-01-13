@@ -566,7 +566,6 @@ func (g *CSharpGen) GenCSharp() error {
 			continue
 		}
 		propName := g.csIdentifier(v.Name())
-		nativeType := g.csNativeType(v.Type())
 		g.Printf("public static %s %s {\n", g.csType(v.Type()), propName)
 		g.Indent()
 		g.Printf("get {\n")
@@ -579,9 +578,7 @@ func (g *CSharpGen) GenCSharp() error {
 		g.Indent()
 		g.emitToNativeParam("value", v.Type(), modeRetained)
 		g.Printf("%s.Native.var_set%s_%s(%s);\n", rootNamespace, g.pkgPrefix, v.Name(), g.nativeParamName("value"))
-		if nativeType == "NByteslice" && g.shouldFreeAfterCall(v.Type(), modeRetained) {
-			g.emitFreeNativeParam("value")
-		}
+		// Note: No free needed - Go's toSlice(v, true) frees the memory after copying
 		g.Outdent()
 		g.Printf("}\n")
 		g.Outdent()
@@ -857,9 +854,10 @@ func isRefnumType(t types.Type) bool {
 
 func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 	name := g.csIdentifier(s.obj.Name())
-	g.Printf("public sealed class %s : %s.Seq.IProxy {\n", name, rootNamespace)
+	g.Printf("public sealed class %s : %s.Seq.IProxy, IDisposable {\n", name, rootNamespace)
 	g.Indent()
-	g.Printf("private readonly int refnum;\n\n")
+	g.Printf("private readonly int refnum;\n")
+	g.Printf("private int disposed;\n\n")
 
 	g.Printf("internal %s(int refnum) { this.refnum = refnum; }\n\n", name)
 	var constructors []*types.Func
@@ -891,9 +889,26 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 		g.genConstructorFromFunc(rootNamespace, name, f)
 	}
 
-	g.Printf("~%s() { %s.Seq.DestroyRef(refnum); }\n\n", name, rootNamespace)
-	g.Printf("public int Refnum => refnum;\n\n")
-	g.Printf("public int IncRefnum() { %s.Seq.IncGoRef(refnum, this); return refnum; }\n\n", rootNamespace)
+	g.Printf("~%s() { Dispose(false); }\n\n", name)
+	g.Printf("public void Dispose() {\n")
+	g.Indent()
+	g.Printf("Dispose(true);\n")
+	g.Printf("GC.SuppressFinalize(this);\n")
+	g.Outdent()
+	g.Printf("}\n\n")
+	g.Printf("private void Dispose(bool disposing) {\n")
+	g.Indent()
+	g.Printf("if (System.Threading.Interlocked.Exchange(ref disposed, 1) != 0) { return; }\n")
+	g.Printf("%s.Seq.DestroyRef(refnum);\n", rootNamespace)
+	g.Outdent()
+	g.Printf("}\n\n")
+	g.Printf("private void ThrowIfDisposed() {\n")
+	g.Indent()
+	g.Printf("if (disposed != 0) { throw new ObjectDisposedException(GetType().FullName); }\n")
+	g.Outdent()
+	g.Printf("}\n\n")
+	g.Printf("public int Refnum { get { ThrowIfDisposed(); return refnum; } }\n\n")
+	g.Printf("public int IncRefnum() { ThrowIfDisposed(); %s.Seq.IncGoRef(refnum, this); return refnum; }\n\n", rootNamespace)
 
 	g.Printf("internal static %s FromRefnum(int refnum) {\n", name)
 	g.Indent()
@@ -912,12 +927,14 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 		g.Indent()
 		g.Printf("get {\n")
 		g.Indent()
+		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
 		g.Printf("var res = %s.Native.%s_Get(refnum);\n", rootNamespace, g.proxyFuncName(s.obj.Name(), f.Name()))
 		g.emitFromNativeReturn("res", f.Type(), true)
 		g.Outdent()
 		g.Printf("}\n")
 		g.Printf("set {\n")
 		g.Indent()
+		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
 		g.emitToNativeParam("value", f.Type(), modeRetained)
 		g.Printf("%s.Native.%s_Set(refnum, %s);\n", rootNamespace, g.proxyFuncName(s.obj.Name(), f.Name()), g.nativeParamName("value"))
 		g.Outdent()
@@ -969,6 +986,7 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 		}
 		g.Printf(") {\n")
 		g.Indent()
+		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
 		for i := 0; i < params.Len(); i++ {
 			g.emitToNativeParam(g.paramName(params, i), params.At(i).Type(), modeTransient)
 		}
@@ -1122,15 +1140,33 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 	g.Printf("}\n\n")
 
 	proxyName := g.csProxyInterfaceName(iface.obj)
-	g.Printf("internal sealed class %s : %s.Seq.IProxy, %s {\n", proxyName, rootNamespace, name)
+	g.Printf("internal sealed class %s : %s.Seq.IProxy, %s, IDisposable {\n", proxyName, rootNamespace, name)
 	g.Indent()
 	g.Printf("private readonly int refnum;\n")
+	g.Printf("private int disposed;\n")
 	g.Printf("private static int registered;\n\n")
 
 	g.Printf("internal %s(int refnum) { this.refnum = refnum; }\n\n", proxyName)
-	g.Printf("~%s() { %s.Seq.DestroyRef(refnum); }\n\n", proxyName, rootNamespace)
-	g.Printf("public int Refnum => refnum;\n\n")
-	g.Printf("public int IncRefnum() { %s.Seq.IncGoRef(refnum, this); return refnum; }\n\n", rootNamespace)
+	g.Printf("~%s() { Dispose(false); }\n\n", proxyName)
+	g.Printf("public void Dispose() {\n")
+	g.Indent()
+	g.Printf("Dispose(true);\n")
+	g.Printf("GC.SuppressFinalize(this);\n")
+	g.Outdent()
+	g.Printf("}\n\n")
+	g.Printf("private void Dispose(bool disposing) {\n")
+	g.Indent()
+	g.Printf("if (System.Threading.Interlocked.Exchange(ref disposed, 1) != 0) { return; }\n")
+	g.Printf("%s.Seq.DestroyRef(refnum);\n", rootNamespace)
+	g.Outdent()
+	g.Printf("}\n\n")
+	g.Printf("private void ThrowIfDisposed() {\n")
+	g.Indent()
+	g.Printf("if (disposed != 0) { throw new ObjectDisposedException(GetType().FullName); }\n")
+	g.Outdent()
+	g.Printf("}\n\n")
+	g.Printf("public int Refnum { get { ThrowIfDisposed(); return refnum; } }\n\n")
+	g.Printf("public int IncRefnum() { ThrowIfDisposed(); %s.Seq.IncGoRef(refnum, this); return refnum; }\n\n", rootNamespace)
 
 	g.Printf("internal static %s FromRefnum(int refnum) {\n", name)
 	g.Indent()
@@ -1178,6 +1214,7 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 		}
 		g.Printf(") {\n")
 		g.Indent()
+		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
 		for i := 0; i < params.Len(); i++ {
 			g.emitToNativeParam(g.paramName(params, i), params.At(i).Type(), modeTransient)
 		}
@@ -1547,13 +1584,27 @@ func (g *CSharpGen) genSeqSupport() {
 	g.Outdent()
 	g.Printf("}\n\n")
 
+	g.Printf("/// <summary>Throws if a previous callback had an unhandled exception.</summary>\n")
+	g.Printf("internal static void ThrowIfPendingException() {\n")
+	g.Indent()
+	g.Printf("var ex = LastUnhandledException;\n")
+	g.Printf("if (ex != null) {\n")
+	g.Indent()
+	g.Printf("LastUnhandledException = null;\n")
+	g.Printf("LastUnhandledExceptionMethod = null;\n")
+	g.Printf("throw new InvalidOperationException($\"Unhandled exception in previous callback: {ex.Message}\", ex);\n")
+	g.Outdent()
+	g.Printf("}\n")
+	g.Outdent()
+	g.Printf("}\n\n")
+
 	g.Printf("[UnmanagedFunctionPointer(CallingConvention.Cdecl)]\n")
 	g.Printf("private delegate void RefCallback(int refnum);\n\n")
 
 	g.Printf("private static void IncRefnum(int refnum) { Tracker.IncRefnum(refnum); }\n")
 	g.Printf("private static void DecRefnum(int refnum) { Tracker.DecRefnum(refnum); }\n\n")
 
-	g.Printf("internal interface IProxy {\n")
+	g.Printf("internal interface IProxy : IDisposable {\n")
 	g.Indent()
 	g.Printf("int Refnum { get; }\n")
 	g.Printf("int IncRefnum();\n")

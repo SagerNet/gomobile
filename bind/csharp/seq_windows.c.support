@@ -7,13 +7,11 @@
 
 #include "seq.h"
 
-static _Atomic(int) go_seq_initialized = 0;
 static _Atomic(go_seq_ref_fn) go_seq_inc_ref_callback = NULL;
 static _Atomic(go_seq_ref_fn) go_seq_dec_ref_callback = NULL;
 
 SEQ_EXPORT void go_seq_init(void) {
-	int expected = 0;
-	atomic_compare_exchange_strong(&go_seq_initialized, &expected, 1);
+	// Initialization hook for future use.
 }
 
 SEQ_EXPORT void go_seq_set_inc_ref(go_seq_ref_fn fn) {
