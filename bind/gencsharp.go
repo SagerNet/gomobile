@@ -315,38 +315,68 @@ func (g *CSharpGen) GenCSharp() error {
 		pkgPath = g.Pkg.Path()
 	}
 	g.Printf(csharpPreamble, g.gobindOpts(), pkgPath)
+	g.emitUsings()
+
+	rootNamespace := g.rootNamespace()
+	g.emitRootNamespace(rootNamespace)
+	g.emitPackageNamespace(rootNamespace)
+
+	if len(g.err) > 0 {
+		return g.err
+	}
+	return nil
+}
+
+func (g *CSharpGen) emitUsings() {
 	g.Printf("using System;\n")
 	g.Printf("using System.Collections.Concurrent;\n")
 	g.Printf("using System.Collections.Generic;\n")
 	g.Printf("using System.Runtime.InteropServices;\n")
 	g.Printf("using System.Text;\n\n")
+}
 
-	rootNamespace := g.rootNamespace()
-
-	// Root namespace with shared types and native declarations.
+func (g *CSharpGen) emitRootNamespace(rootNamespace string) {
 	g.Printf("namespace %s {\n", rootNamespace)
 	g.Indent()
 
-	// Shared structs only emitted once.
-	if g.Pkg == nil {
-		g.Printf("[StructLayout(LayoutKind.Sequential)]\n")
-		g.Printf("internal struct NString {\n")
-		g.Indent()
-		g.Printf("public IntPtr ptr;\n")
-		g.Printf("public int len;\n")
-		g.Outdent()
-		g.Printf("}\n\n")
+	g.emitSharedNativeStructs()
 
-		g.Printf("[StructLayout(LayoutKind.Sequential)]\n")
-		g.Printf("internal struct NByteslice {\n")
-		g.Indent()
-		g.Printf("public IntPtr ptr;\n")
-		g.Printf("public int len;\n")
-		g.Outdent()
-		g.Printf("}\n\n")
+	returnStructs := g.collectReturnStructs()
+	g.emitReturnStructs(returnStructs)
+
+	g.emitNativeClass()
+
+	if g.Pkg == nil {
+		g.genSeqSupport()
 	}
 
-	// Return structs for multi-value results.
+	g.Outdent()
+	g.Printf("}\n\n")
+}
+
+func (g *CSharpGen) emitSharedNativeStructs() {
+	if g.Pkg != nil {
+		return
+	}
+
+	g.Printf("[StructLayout(LayoutKind.Sequential)]\n")
+	g.Printf("internal struct NString {\n")
+	g.Indent()
+	g.Printf("public IntPtr ptr;\n")
+	g.Printf("public int len;\n")
+	g.Outdent()
+	g.Printf("}\n\n")
+
+	g.Printf("[StructLayout(LayoutKind.Sequential)]\n")
+	g.Printf("internal struct NByteslice {\n")
+	g.Indent()
+	g.Printf("public IntPtr ptr;\n")
+	g.Printf("public int len;\n")
+	g.Outdent()
+	g.Printf("}\n\n")
+}
+
+func (g *CSharpGen) collectReturnStructs() map[string][]types.Type {
 	returnStructs := make(map[string][]types.Type)
 	collectStruct := func(cName string, res *types.Tuple) {
 		if res == nil || res.Len() <= 1 {
@@ -376,7 +406,10 @@ func (g *CSharpGen) GenCSharp() error {
 			collectStruct(fmt.Sprintf("cproxy%s_%s_%s", g.pkgPrefix, iface.obj.Name(), m.Name()), m.Type().(*types.Signature).Results())
 		}
 	}
+	return returnStructs
+}
 
+func (g *CSharpGen) emitReturnStructs(returnStructs map[string][]types.Type) {
 	var structNames []string
 	for name := range returnStructs {
 		structNames = append(structNames, name)
@@ -394,7 +427,9 @@ func (g *CSharpGen) GenCSharp() error {
 		g.Outdent()
 		g.Printf("}\n\n")
 	}
+}
 
+func (g *CSharpGen) emitNativeClass() {
 	g.Printf("internal static partial class Native {\n")
 	g.Indent()
 	if g.Pkg == nil {
@@ -419,7 +454,6 @@ func (g *CSharpGen) GenCSharp() error {
 		g.Printf("internal static extern void go_seq_set_dec_ref(IntPtr fn);\n\n")
 	}
 
-	// Native declarations for package items.
 	for _, v := range g.vars {
 		if !g.isSupported(v.Type()) {
 			continue
@@ -455,54 +489,12 @@ func (g *CSharpGen) GenCSharp() error {
 	}
 
 	for _, s := range g.structs {
-		// Methods
 		for _, m := range exportedMethodSet(types.NewPointer(s.obj.Type())) {
 			if !g.isSigSupported(m.Type()) {
 				continue
 			}
 			sig := m.Type().(*types.Signature)
 			cName := g.proxyFuncName(s.obj.Name(), m.Name())
-			retType := "void"
-			if sig.Results().Len() == 1 {
-				retType = g.csNativeType(sig.Results().At(0).Type())
-			} else if sig.Results().Len() == 2 {
-				retType = g.csReturnStructName(cName)
-			}
-			g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
-			g.Printf("internal static extern %s %s(int refnum", retType, cName)
-			params := sig.Params()
-			for i := 0; i < params.Len(); i++ {
-				g.Printf(", %s %s", g.csNativeType(params.At(i).Type()), g.paramName(params, i))
-			}
-			g.Printf(");\n\n")
-		}
-
-		// Fields
-		for _, f := range exportedFields(s.t) {
-			if !g.isSupported(f.Type()) {
-				continue
-			}
-			g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
-			g.Printf("internal static extern void %s_Set(int refnum, %s v);\n\n", g.proxyFuncName(s.obj.Name(), f.Name()), g.csNativeType(f.Type()))
-			g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
-			g.Printf("internal static extern %s %s_Get(int refnum);\n\n", g.csNativeType(f.Type()), g.proxyFuncName(s.obj.Name(), f.Name()))
-		}
-
-		// Default constructor
-		newName := g.newFuncName(s.obj.Name())
-		if newName != "" {
-			g.Printf("[DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]\n")
-			g.Printf("internal static extern int %s();\n\n", newName)
-		}
-	}
-
-	for _, iface := range g.interfaces {
-		for _, m := range iface.summary.callable {
-			if !g.isSigSupported(m.Type()) {
-				continue
-			}
-			sig := m.Type().(*types.Signature)
-			cName := g.proxyFuncName(iface.obj.Name(), m.Name())
 			retType := "void"
 			if sig.Results().Len() == 1 {
 				retType = g.csNativeType(sig.Results().At(0).Type())
@@ -529,18 +521,11 @@ func (g *CSharpGen) GenCSharp() error {
 			g.Printf("internal static extern void %s(IntPtr fn);\n\n", cName)
 		}
 	}
-
 	g.Outdent()
 	g.Printf("}\n\n")
+}
 
-	if g.Pkg == nil {
-		g.genSeqSupport()
-	}
-
-	g.Outdent()
-	g.Printf("}\n\n")
-
-	// Package namespace
+func (g *CSharpGen) emitPackageNamespace(rootNamespace string) {
 	pkgNamespace := g.csNamespace(g.Pkg)
 	g.Printf("namespace %s {\n", pkgNamespace)
 	g.Indent()
@@ -550,7 +535,26 @@ func (g *CSharpGen) GenCSharp() error {
 	g.Indent()
 	g.Printf("static %s() { %s.Seq.Touch(); }\n\n", pkgClassName, rootNamespace)
 
-	// Constants
+	g.emitPackageConstants()
+	g.emitPackageVariables(rootNamespace)
+	g.emitPackageFunctions(rootNamespace)
+
+	g.Outdent()
+	g.Printf("}\n\n")
+
+	for _, s := range g.structs {
+		g.genStructClass(rootNamespace, s)
+	}
+
+	for _, iface := range g.interfaces {
+		g.genInterface(rootNamespace, iface)
+	}
+
+	g.Outdent()
+	g.Printf("}\n")
+}
+
+func (g *CSharpGen) emitPackageConstants() {
 	for _, c := range g.constants {
 		if _, ok := c.Type().(*types.Basic); !ok || !g.isSupported(c.Type()) {
 			continue
@@ -560,8 +564,9 @@ func (g *CSharpGen) GenCSharp() error {
 	if len(g.constants) > 0 {
 		g.Printf("\n")
 	}
+}
 
-	// Variables
+func (g *CSharpGen) emitPackageVariables(rootNamespace string) {
 	for _, v := range g.vars {
 		if !g.isSupported(v.Type()) {
 			continue
@@ -579,14 +584,14 @@ func (g *CSharpGen) GenCSharp() error {
 		g.Indent()
 		g.emitToNativeParam("value", v.Type(), modeRetained)
 		g.Printf("%s.Native.var_set%s_%s(%s);\n", rootNamespace, g.pkgPrefix, v.Name(), g.nativeParamName("value"))
-		// Note: No free needed - Go's toSlice(v, true) frees the memory after copying
 		g.Outdent()
 		g.Printf("}\n")
 		g.Outdent()
 		g.Printf("}\n\n")
 	}
+}
 
-	// Functions
+func (g *CSharpGen) emitPackageFunctions(rootNamespace string) {
 	for _, f := range g.funcs {
 		if !g.isSigSupported(f.Type()) {
 			continue
@@ -687,29 +692,7 @@ func (g *CSharpGen) GenCSharp() error {
 		g.Outdent()
 		g.Printf("}\n\n")
 	}
-
-	g.Outdent()
-	g.Printf("}\n\n")
-
-	// Structs
-	for _, s := range g.structs {
-		g.genStructClass(rootNamespace, s)
-	}
-
-	// Interfaces
-	for _, iface := range g.interfaces {
-		g.genInterface(rootNamespace, iface)
-	}
-
-	g.Outdent()
-	g.Printf("}\n")
-
-	if len(g.err) > 0 {
-		return g.err
-	}
-	return nil
 }
-
 func (g *CSharpGen) nativeParamName(name string) string {
 	return "_" + name
 }
@@ -928,16 +911,16 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 		g.Indent()
 		g.Printf("get {\n")
 		g.Indent()
-                g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
-                g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
+		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+		g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
 		g.Printf("var res = %s.Native.%s_Get(refnum);\n", rootNamespace, g.proxyFuncName(s.obj.Name(), f.Name()))
 		g.emitFromNativeReturn("res", f.Type(), true)
 		g.Outdent()
 		g.Printf("}\n")
 		g.Printf("set {\n")
 		g.Indent()
-                g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
-                g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
+		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+		g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
 		g.emitToNativeParam("value", f.Type(), modeRetained)
 		g.Printf("%s.Native.%s_Set(refnum, %s);\n", rootNamespace, g.proxyFuncName(s.obj.Name(), f.Name()), g.nativeParamName("value"))
 		g.Outdent()
@@ -989,8 +972,8 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 		}
 		g.Printf(") {\n")
 		g.Indent()
-                g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
-                g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
+		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+		g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
 		for i := 0; i < params.Len(); i++ {
 			g.emitToNativeParam(g.paramName(params, i), params.At(i).Type(), modeTransient)
 		}
@@ -1218,8 +1201,8 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 		}
 		g.Printf(") {\n")
 		g.Indent()
-                g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
-                g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
+		g.Printf("ThrowIfDisposed(); %s.Seq.ThrowIfPendingException();\n", rootNamespace)
+		g.Printf("%s.Seq.IncGoRef(refnum, this);\n", rootNamespace)
 		for i := 0; i < params.Len(); i++ {
 			g.emitToNativeParam(g.paramName(params, i), params.At(i).Type(), modeTransient)
 		}
