@@ -8,8 +8,10 @@ package seq
 #include <stdio.h>
 
 static void seq_debug_output(const char* message) {
-        OutputDebugStringA(message);
+	OutputDebugStringA(message);
 }
+
+static const char* seq_debug_init_message = "gomobile: debug hooks installed\n";
 
 static LONG WINAPI seq_crash_handler(EXCEPTION_POINTERS* exceptionInfo) {
         if (exceptionInfo == NULL || exceptionInfo->ExceptionRecord == NULL) {
@@ -61,6 +63,7 @@ static void seq_register_crash_handler(void) {
 import "C"
 
 import (
+	"os"
 	"unsafe"
 	_ "unsafe" // Required for go:linkname
 )
@@ -95,4 +98,7 @@ func debugWrite(fd uintptr, p unsafe.Pointer, n int32) int32 {
 func init() {
 	C.seq_register_crash_handler()
 	runtimeOverrideWrite = debugWrite
+	if os.Getenv("GOMOBILE_DEBUG_OUTPUT") != "" {
+		C.seq_debug_output(C.seq_debug_init_message)
+	}
 }
