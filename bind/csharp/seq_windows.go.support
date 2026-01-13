@@ -22,6 +22,8 @@ package main
 import "C"
 
 import (
+	"fmt"
+	"math"
 	"unsafe"
 	_ "unsafe" // Required for go:linkname
 
@@ -149,6 +151,9 @@ func GoSeqFree(ptr unsafe.Pointer) {
 
 // encodeString copies a Go string and returns it as a nstring.
 func encodeString(s string) C.nstring {
+	if len(s) > math.MaxInt32 {
+		panic(fmt.Sprintf("encodeString: string length %d exceeds maximum %d", len(s), math.MaxInt32))
+	}
 	n := C.int(len(s))
 	if n == 0 {
 		return C.nstring{}
@@ -176,6 +181,9 @@ func decodeString(str C.nstring) string {
 func fromSlice(s []byte, cpy bool) C.nbyteslice {
 	if s == nil || len(s) == 0 {
 		return C.nbyteslice{}
+	}
+	if len(s) > math.MaxInt32 {
+		panic(fmt.Sprintf("fromSlice: slice length %d exceeds maximum %d", len(s), math.MaxInt32))
 	}
 	ptr, n := unsafe.Pointer(&s[0]), C.int(len(s))
 	if cpy {

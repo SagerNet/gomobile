@@ -283,8 +283,8 @@ func (g *CSharpGen) proxyFuncName(objName, funcName string) string {
 }
 
 // isConsSigSupported reports whether the generators can handle a given
-// constructor signature. It skips constructors taking a single int32 argument
-// since they clash with the proxy constructors that take a refnum.
+// constructor signature. It skips constructors taking a single int32/uint32
+// argument since they clash with the proxy constructors that take a refnum.
 func (g *CSharpGen) isConsSigSupported(t types.Type) bool {
 	if !g.isSigSupported(t) {
 		return false
@@ -294,7 +294,8 @@ func (g *CSharpGen) isConsSigSupported(t types.Type) bool {
 		return true
 	}
 	if basicType, ok := params.At(0).Type().(*types.Basic); ok {
-		if basicType.Kind() == types.Int32 {
+		switch basicType.Kind() {
+		case types.Int32, types.Uint32:
 			return false
 		}
 	}
@@ -667,8 +668,18 @@ func (g *CSharpGen) GenCSharp() error {
 
 		if returnsError {
 			if res.Len() == 2 {
+				if isRefnumType(res.At(0).Type()) {
+					g.Printf("if (res.r1 != %s.Seq.NullRefNum) {\n", rootNamespace)
+					g.Indent()
+					g.Printf("%s.Seq.DestroyRef(res.r0);\n", rootNamespace)
+					g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+					g.Outdent()
+					g.Printf("}\n")
+				}
 				g.emitFromNativeValue("value", "res.r0", res.At(0).Type(), true)
-				g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+				if !isRefnumType(res.At(0).Type()) {
+					g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+				}
 				g.Printf("return value;\n")
 			} else {
 				g.Printf("%s.Seq.ThrowIfError(res);\n", rootNamespace)
@@ -828,6 +839,22 @@ func indirectNamed(t types.Type) (*types.Named, bool) {
 	}
 }
 
+// isRefnumType returns true if the type is represented by a refnum (Go object reference)
+// and would need cleanup if not properly managed.
+func isRefnumType(t types.Type) bool {
+	switch t := t.(type) {
+	case *types.Pointer:
+		_, ok := t.Elem().(*types.Named)
+		return ok
+	case *types.Named:
+		switch t.Underlying().(type) {
+		case *types.Interface, *types.Struct:
+			return true
+		}
+	}
+	return false
+}
+
 func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 	name := g.csIdentifier(s.obj.Name())
 	g.Printf("public sealed class %s : %s.Seq.IProxy {\n", name, rootNamespace)
@@ -850,14 +877,14 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 	}
 
 	if !hasDefaultConstructor {
-		g.Printf("public %s() {\n", name)
-		g.Indent()
 		newName := g.newFuncName(s.obj.Name())
 		if newName != "" {
+			g.Printf("public %s() {\n", name)
+			g.Indent()
 			g.Printf("refnum = %s.Native.%s();\n", rootNamespace, newName)
+			g.Outdent()
+			g.Printf("}\n\n")
 		}
-		g.Outdent()
-		g.Printf("}\n\n")
 	}
 
 	for _, f := range constructors {
@@ -976,8 +1003,18 @@ func (g *CSharpGen) genStructClass(rootNamespace string, s structInfo) {
 
 		if returnsError {
 			if res.Len() == 2 {
+				if isRefnumType(res.At(0).Type()) {
+					g.Printf("if (res.r1 != %s.Seq.NullRefNum) {\n", rootNamespace)
+					g.Indent()
+					g.Printf("%s.Seq.DestroyRef(res.r0);\n", rootNamespace)
+					g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+					g.Outdent()
+					g.Printf("}\n")
+				}
 				g.emitFromNativeValue("value", "res.r0", res.At(0).Type(), true)
-				g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+				if !isRefnumType(res.At(0).Type()) {
+					g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+				}
 				g.Printf("return value;\n")
 			} else {
 				g.Printf("%s.Seq.ThrowIfError(res);\n", rootNamespace)
@@ -1175,8 +1212,18 @@ func (g *CSharpGen) genInterface(rootNamespace string, iface interfaceInfo) {
 
 		if returnsError {
 			if res.Len() == 2 {
+				if isRefnumType(res.At(0).Type()) {
+					g.Printf("if (res.r1 != %s.Seq.NullRefNum) {\n", rootNamespace)
+					g.Indent()
+					g.Printf("%s.Seq.DestroyRef(res.r0);\n", rootNamespace)
+					g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+					g.Outdent()
+					g.Printf("}\n")
+				}
 				g.emitFromNativeValue("value", "res.r0", res.At(0).Type(), true)
-				g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+				if !isRefnumType(res.At(0).Type()) {
+					g.Printf("%s.Seq.ThrowIfError(res.r1);\n", rootNamespace)
+				}
 				g.Printf("return value;\n")
 			} else {
 				g.Printf("%s.Seq.ThrowIfError(res);\n", rootNamespace)
@@ -1486,7 +1533,8 @@ func (g *CSharpGen) genSeqSupport() {
 
 	g.Printf("public static Exception LastUnhandledException { get; private set; }\n")
 	g.Printf("public static string LastUnhandledExceptionMethod { get; private set; }\n")
-	g.Printf("public static bool ThrowOnUnhandledCallbackException { get; set; }\n")
+	g.Printf("/// <summary>When true, calls Environment.FailFast on unhandled callback exceptions.</summary>\n")
+	g.Printf("public static bool FailFastOnUnhandledCallbackException { get; set; }\n")
 	g.Printf("public static Action<Exception, string> UnhandledCallbackException { get; set; }\n\n")
 	g.Printf("internal static void ReportUnhandledException(Exception ex, string methodName) {\n")
 	g.Indent()
@@ -1495,7 +1543,7 @@ func (g *CSharpGen) genSeqSupport() {
 	g.Printf("var handler = UnhandledCallbackException;\n")
 	g.Printf("if (handler != null) { handler(ex, methodName); }\n")
 	g.Printf("Console.Error.WriteLine($\"[GoMobile] Unhandled exception in callback {methodName}: {ex}\");\n")
-	g.Printf("if (ThrowOnUnhandledCallbackException) { throw new InvalidOperationException($\"Unhandled exception in Go callback {methodName}\", ex); }\n")
+	g.Printf("if (FailFastOnUnhandledCallbackException) { Environment.FailFast($\"Unhandled exception in Go callback {methodName}\", ex); }\n")
 	g.Outdent()
 	g.Printf("}\n\n")
 
@@ -1526,6 +1574,7 @@ func (g *CSharpGen) genSeqSupport() {
 	g.Printf("if (value == null) { return NullRefNum; }\n")
 	g.Printf("if (!objectRefs.TryGetValue(value, out var refnum)) {\n")
 	g.Indent()
+	g.Printf("if (nextRefnum == int.MaxValue) { throw new InvalidOperationException(\"RefTracker: refnum overflow\"); }\n")
 	g.Printf("refnum = nextRefnum++;\n")
 	g.Printf("objectRefs[value] = refnum;\n")
 	g.Outdent()
@@ -1596,7 +1645,7 @@ func (g *CSharpGen) genSeqSupport() {
 	g.Printf("internal Ref(object value) { Value = value; }\n")
 	g.Printf("internal object Value { get; }\n")
 	g.Printf("internal int Count { get; private set; }\n")
-	g.Printf("internal void Inc() { Count++; }\n")
+	g.Printf("internal void Inc() { if (Count == int.MaxValue) { throw new InvalidOperationException(\"Ref: refcount overflow\"); } Count++; }\n")
 	g.Printf("internal void Dec() { Count--; }\n")
 	g.Outdent()
 	g.Printf("}\n\n")
@@ -1652,6 +1701,7 @@ const csharpCPreamble = gobindPreamble + `// C functions for the Go <=> C# bridg
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
 #include "seq.h"
 #include "%[3]s_windows.h"
 
@@ -1728,11 +1778,11 @@ func (g *CSharpGen) genCProxyBridge(ifaceName string, m *types.Func) {
 		g.Printf(", %s %s", g.cgoType(params.At(i).Type()), g.paramName(params, i))
 	}
 	g.Printf(");\n")
-	g.Printf("static %s_fn %s_callback = NULL;\n\n", cproxyName, cproxyName)
+	g.Printf("static _Atomic(%s_fn) %s_callback = NULL;\n\n", cproxyName, cproxyName)
 
 	g.Printf("SEQ_EXPORT void %s(%s_fn fn) {\n", setterName, cproxyName)
 	g.Indent()
-	g.Printf("%s_callback = fn;\n", cproxyName)
+	g.Printf("atomic_store(&%s_callback, fn);\n", cproxyName)
 	g.Outdent()
 	g.Printf("}\n\n")
 
@@ -1742,7 +1792,8 @@ func (g *CSharpGen) genCProxyBridge(ifaceName string, m *types.Func) {
 	}
 	g.Printf(") {\n")
 	g.Indent()
-	g.Printf("if (%s_callback == NULL) {\n", cproxyName)
+	g.Printf("%s_fn fn = atomic_load(&%s_callback);\n", cproxyName, cproxyName)
+	g.Printf("if (fn == NULL) {\n")
 	g.Indent()
 	g.Printf("abort();\n")
 	if res.Len() == 0 {
@@ -1755,9 +1806,9 @@ func (g *CSharpGen) genCProxyBridge(ifaceName string, m *types.Func) {
 	g.Outdent()
 	g.Printf("}\n")
 	if res.Len() == 0 {
-		g.Printf("%s_callback(refnum", cproxyName)
+		g.Printf("fn(refnum")
 	} else {
-		g.Printf("return %s_callback(refnum", cproxyName)
+		g.Printf("return fn(refnum")
 	}
 	for i := 0; i < params.Len(); i++ {
 		g.Printf(", %s", g.paramName(params, i))
