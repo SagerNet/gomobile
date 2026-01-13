@@ -68,8 +68,6 @@ import (
 //go:linkname runtimeOverrideWrite runtime.overrideWrite
 var runtimeOverrideWrite func(fd uintptr, p unsafe.Pointer, n int32) int32
 
-// debugWrite intercepts stderr output and forwards it to OutputDebugString.
-//
 //go:nosplit
 func debugWrite(fd uintptr, p unsafe.Pointer, n int32) int32 {
 	if fd != 2 {
