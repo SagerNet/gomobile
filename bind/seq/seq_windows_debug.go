@@ -6,12 +6,12 @@ package seq
 #cgo windows CFLAGS: -D__GOBIND_WINDOWS__
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static void seq_debug_output(const char* message) {
 	OutputDebugStringA(message);
 }
 
-static const char* seq_debug_init_message = "gomobile: debug hooks installed\n";
 
 static LONG WINAPI seq_crash_handler(EXCEPTION_POINTERS* exceptionInfo) {
         if (exceptionInfo == NULL || exceptionInfo->ExceptionRecord == NULL) {
@@ -99,6 +99,8 @@ func init() {
 	C.seq_register_crash_handler()
 	runtimeOverrideWrite = debugWrite
 	if os.Getenv("GOMOBILE_DEBUG_OUTPUT") != "" {
-		C.seq_debug_output(C.seq_debug_init_message)
+		message := C.CString("gomobile: debug hooks installed\n")
+		C.seq_debug_output(message)
+		C.free(unsafe.Pointer(message))
 	}
 }
