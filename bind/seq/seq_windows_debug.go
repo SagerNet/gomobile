@@ -12,6 +12,12 @@ static void seq_debug_output(const char* message) {
 	OutputDebugStringA(message);
 }
 
+static int seq_debug_enabled(void) {
+	char value[2];
+	DWORD len = GetEnvironmentVariableA("GOMOBILE_DEBUG_OUTPUT", value, sizeof(value));
+	return len > 0;
+}
+
 
 static LONG WINAPI seq_crash_handler(EXCEPTION_POINTERS* exceptionInfo) {
         if (exceptionInfo == NULL || exceptionInfo->ExceptionRecord == NULL) {
@@ -39,9 +45,9 @@ static LONG WINAPI seq_crash_handler(EXCEPTION_POINTERS* exceptionInfo) {
 static void* seq_crash_handler_handle = NULL;
 
 static void seq_register_crash_handler(void) {
-        if (seq_crash_handler_handle != NULL) {
-                return;
-        }
+	if (seq_crash_handler_handle != NULL) {
+		return;
+	}
         seq_crash_handler_handle = AddVectoredExceptionHandler(1, seq_crash_handler);
         if (seq_crash_handler_handle == NULL) {
                 DWORD errorCode = GetLastError();
@@ -57,7 +63,17 @@ static void seq_register_crash_handler(void) {
                 } else {
                         OutputDebugStringA("gomobile: AddVectoredExceptionHandler failed\n");
                 }
-        }
+	}
+}
+
+#if defined(__GNUC__)
+__attribute__((constructor))
+#endif
+static void seq_debug_constructor(void) {
+	if (seq_debug_enabled()) {
+		OutputDebugStringA("gomobile: cgo constructor\n");
+	}
+	seq_register_crash_handler();
 }
 */
 import "C"
