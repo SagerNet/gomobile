@@ -359,7 +359,7 @@ func goCmdAt(at string, subcmd string, srcs []string, env []string, args ...stri
 	} else {
 		env = append([]string{}, env...)
 	}
-	cmd.Env = env
+	cmd.Env = environ(env)
 	cmd.Dir = at
 	return runCmd(cmd)
 }
@@ -377,7 +377,7 @@ func goModTidyAt(at string, env []string) error {
 	} else {
 		env = append([]string{}, env...)
 	}
-	cmd.Env = env
+	cmd.Env = environ(env)
 	cmd.Dir = at
 	return runCmd(cmd)
 }
