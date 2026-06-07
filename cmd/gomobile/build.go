@@ -352,14 +352,7 @@ func goCmdAt(at string, subcmd string, srcs []string, env []string, args ...stri
 	cmd.Args = append(cmd.Args, args...)
 	cmd.Args = append(cmd.Args, srcs...)
 
-	// Specify GOMODCACHE explicitly. The default cache path is GOPATH[0]/pkg/mod,
-	// but the path varies when GOPATH is specified at env, which results in cold cache.
-	if gmc, err := goModCachePath(); err == nil {
-		env = append([]string{"GOMODCACHE=" + gmc}, env...)
-	} else {
-		env = append([]string{}, env...)
-	}
-	cmd.Env = environ(env)
+	cmd.Env = goCommandEnv(env)
 	cmd.Dir = at
 	return runCmd(cmd)
 }
@@ -370,16 +363,23 @@ func goModTidyAt(at string, env []string) error {
 		cmd.Args = append(cmd.Args, "-v")
 	}
 
-	// Specify GOMODCACHE explicitly. The default cache path is GOPATH[0]/pkg/mod,
-	// but the path varies when GOPATH is specified at env, which results in cold cache.
-	if gmc, err := goModCachePath(); err == nil {
-		env = append([]string{"GOMODCACHE=" + gmc}, env...)
-	} else {
-		env = append([]string{}, env...)
-	}
-	cmd.Env = environ(env)
+	cmd.Env = goCommandEnv(env)
 	cmd.Dir = at
 	return runCmd(cmd)
+}
+
+// goCommandEnv returns an environment for go subprocesses.
+//
+// Specify GOMODCACHE explicitly. The default cache path is GOPATH[0]/pkg/mod,
+// but gomobile prepends generated GOPATH entries, which otherwise creates a
+// cold module cache under the temporary work tree.
+func goCommandEnv(env []string, extra ...string) []string {
+	merged := append([]string{}, env...)
+	if gmc, err := goModCachePath(); err == nil {
+		merged = append(merged, "GOMODCACHE="+gmc)
+	}
+	merged = append(merged, extra...)
+	return environ(merged)
 }
 
 // parseBuildTarget parses buildTarget into 1 or more platforms and architectures.

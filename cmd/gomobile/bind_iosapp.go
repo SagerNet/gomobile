@@ -297,9 +297,11 @@ func goAppleBind(gobind string, pkgs []*packages.Package, targets []targetInfo) 
 		// And in gomobile, a temporary directory is usually used as a working directly.
 		// Unfortunately, xcodebuild in Xcode 15 seems to have a bug and might not be able to understand fullpaths with symbolic links.
 		// As a workaround, resolve the path with symbolic links by filepath.EvalSymlinks.
-		dir, err := filepath.EvalSymlinks(dir)
-		if err != nil {
-			return err
+		if !buildN {
+			dir, err = filepath.EvalSymlinks(dir)
+			if err != nil {
+				return err
+			}
 		}
 		xcframeworkArgs = append(xcframeworkArgs, "-framework", dir)
 	}
@@ -357,10 +359,7 @@ func goAppleBindArchive(out string, env []string, gosrc string, tags []string) e
 	}
 	cmd.Args = append(cmd.Args, ".")
 	cmd.Dir = gosrc
-	if gmc, err := goModCachePath(); err == nil {
-		env = append([]string{"GOMODCACHE=" + gmc}, env...)
-	}
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = goCommandEnv(env)
 	return runCmd(cmd)
 }
 
@@ -368,12 +367,16 @@ func goAppleBindArchive(out string, env []string, gosrc string, tags []string) e
 // of all dependencies. This is needed because go build -buildmode=c-archive
 // does not include external static libraries specified in CGO LDFLAGS.
 func extractExternalStaticLibraries(env []string, gosrc string, pkgPaths []string, tags []string) ([]string, error) {
+	if buildN {
+		return nil, nil
+	}
+
 	cmd := exec.Command("go", "list", "-deps", "-f", "{{range .CgoLDFLAGS}}{{println .}}{{end}}")
 	if len(tags) > 0 {
 		cmd.Args = append(cmd.Args, "-tags="+strings.Join(tags, ","))
 	}
 	cmd.Args = append(cmd.Args, pkgPaths...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = goCommandEnv(env, "GOPROXY=off")
 	cmd.Dir = gosrc
 
 	stdout, err := cmd.StdoutPipe()
@@ -386,23 +389,10 @@ func extractExternalStaticLibraries(env []string, gosrc string, pkgPaths []strin
 		return nil, fmt.Errorf("go list start failed: %w", err)
 	}
 
-	seen := make(map[string]bool)
-	var libraries []string
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		flag := strings.TrimSpace(scanner.Text())
-		if flag == "" {
-			continue
-		}
-		// Only include .a files (static libraries)
-		if strings.HasSuffix(flag, ".a") && !seen[flag] {
-			seen[flag] = true
-			libraries = append(libraries, flag)
-		}
-	}
-	if err := scanner.Err(); err != nil {
+	libraries, scanErr := collectExternalStaticLibraries(stdout)
+	if scanErr != nil {
 		_ = cmd.Wait()
-		return nil, fmt.Errorf("failed to parse go list output: %w", err)
+		return nil, fmt.Errorf("failed to parse go list output: %w", scanErr)
 	}
 	if err := cmd.Wait(); err != nil {
 		if errMsg := strings.TrimSpace(stderr.String()); errMsg != "" {
@@ -411,6 +401,26 @@ func extractExternalStaticLibraries(env []string, gosrc string, pkgPaths []strin
 		return nil, fmt.Errorf("go list failed: %w", err)
 	}
 
+	return libraries, nil
+}
+
+func collectExternalStaticLibraries(r io.Reader) ([]string, error) {
+	seen := make(map[string]bool)
+	var libraries []string
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		flag := strings.TrimSpace(scanner.Text())
+		if flag == "" {
+			continue
+		}
+		if strings.HasSuffix(flag, ".a") && !seen[flag] {
+			seen[flag] = true
+			libraries = append(libraries, flag)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 	return libraries, nil
 }
 
