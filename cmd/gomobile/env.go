@@ -515,7 +515,8 @@ func environ(kv []string) []string {
 	for _, ev := range kv {
 		elem := strings.SplitN(ev, "=", 2)
 		if len(elem) != 2 || elem[0] == "" {
-			panic(fmt.Sprintf("malformed env var %q from input", ev))
+			fmt.Fprintf(os.Stderr, "malformed env var %q from input\n", ev)
+			continue
 		}
 		if goos == "windows" {
 			elem[0] = strings.ToUpper(elem[0])
