@@ -1126,8 +1126,12 @@ func (g *ObjcGen) genStructH(obj *types.TypeName, t *types.Struct) {
 		name, typ := f.Name(), g.objcType(f.Type())
 		g.objcdoc(doc.Member(f.Name()))
 
-		// properties are atomic by default so explicitly say otherwise
-		g.Printf("@property (nonatomic) %s %s;\n", typ, objcNameReplacer(lowerFirst(name)))
+		// properties are atomic by default so explicitly say otherwise.
+		// The setter is implemented under the raw Go field name (e.g. setURL:),
+		// which differs from the property's implied setter (setUrl:) for fields
+		// starting with an initialism; declare it explicitly so the property maps
+		// to the real implementation instead of a clang-synthesized dead ivar.
+		g.Printf("@property (nonatomic, setter=set%s:) %s %s;\n", name, typ, objcNameReplacer(lowerFirst(name)))
 	}
 
 	// exported methods
