@@ -376,7 +376,7 @@ func extractExternalStaticLibraries(env []string, gosrc string, pkgPaths []strin
 		cmd.Args = append(cmd.Args, "-tags="+strings.Join(tags, ","))
 	}
 	cmd.Args = append(cmd.Args, pkgPaths...)
-	cmd.Env = goCommandEnv(env, "GOPROXY=off")
+	cmd.Env = append(os.Environ(), goCommandEnv(env, "GOPROXY=off")...)
 	cmd.Dir = gosrc
 
 	stdout, err := cmd.StdoutPipe()
