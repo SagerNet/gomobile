@@ -368,18 +368,12 @@ func goModTidyAt(at string, env []string) error {
 	return runCmd(cmd)
 }
 
-// goCommandEnv returns an environment for go subprocesses.
-//
-// Specify GOMODCACHE explicitly. The default cache path is GOPATH[0]/pkg/mod,
-// but gomobile prepends generated GOPATH entries, which otherwise creates a
-// cold module cache under the temporary work tree.
 func goCommandEnv(env []string, extra ...string) []string {
 	merged := append([]string{}, env...)
 	if gmc, err := goModCachePath(); err == nil {
 		merged = append(merged, "GOMODCACHE="+gmc)
 	}
-	merged = append(merged, extra...)
-	return environ(merged)
+	return append(merged, extra...)
 }
 
 // parseBuildTarget parses buildTarget into 1 or more platforms and architectures.
